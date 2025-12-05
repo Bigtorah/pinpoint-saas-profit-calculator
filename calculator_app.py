@@ -1,397 +1,395 @@
 import streamlit as st
 import os
+import requests
+import json
+import time
+import base64
 
 # --- PINPOINT BRAND COLORS ---
-# Primary Blue (Dark): Used for headings, strong accents, and button backgrounds
 PP_BLUE_DARK = "#0F4C81" 
-# Secondary Blue (Light): Used for borders, highlights, and secondary text
 PP_BLUE_LIGHT = "#1A73E8"
-# Accent Purple (for highlights/emphasis, mimicking the box in the hero image)
 PP_ACCENT_PURPLE = "#8E44AD"
-# Background: White
 PP_BG_WHITE = "#ffffff"
 
-# -----------------------------
-#   PAGE CONFIG
-# -----------------------------
-st.set_page_config(
-    page_title="Pinpoint Payments – Agent Revenue & Fees Calculator",
-    page_icon="💳",
-    layout="wide",
-)
+# --- API Configuration ---
+# The API key is injected by the environment. Leave this as an empty string.
+API_KEY = ""
+MODEL_NAME = "gemini-2.5-flash-preview-09-2025"
+API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={API_KEY}"
 
-# -----------------------------
-#   BRAND STYLING (CSS Overhaul)
-# -----------------------------
-st.markdown(
-    f"""
-    <style>
-    /* Global Styles */
-    .main {{ 
-        background-color: {PP_BG_WHITE}; 
-        padding: 2rem;
-    }}
-    
-    /* Typography */
-    h1, h2, h3, h4 {{
-        color: {PP_BLUE_DARK};
-        font-weight: 700;
-        letter-spacing: -0.02em;
-        padding-top: 10px;
-    }}
-
-    /* Subtitle Styles */
-    .pp-subtitle {{
-        color: #4A4F5A;
-        font-size: 1.05rem;
-        margin-bottom: 2rem;
-        text-align: center;
-        max-width: 600px;
-        margin-left: auto;
-        margin-right: auto;
-        line-height: 1.5;
-    }}
-    
-    /* Streamlit Components */
-    .stTextInput>div>div>input, 
-    .stSelectbox>div>div, 
-    .stNumberInput>div>div>input {{
-        border: 2px solid {PP_BLUE_DARK} !important;
-        border-radius: 8px;
-        padding: 0.5rem 1rem;
-    }}
-    
-    /* Button Styles */
-    .stButton>button {{
-        background-color: {PP_BLUE_DARK};
-        color: white;
-        border-radius: 20px;
-        padding: 0.5rem 1.5rem;
-        border: none;
-        font-weight: 600;
-        transition: background-color 0.3s;
-    }}
-    .stButton>button:hover {{
-        background-color: {PP_BLUE_LIGHT};
-        color: white;
-    }}
-
-    /* Expander Styles (for fee breakdowns) */
-    .streamlit-expanderHeader {{
-        background-color: #F8F8F8; /* Light gray background */
-        border-radius: 8px;
-        border-left: 5px solid {PP_BLUE_LIGHT};
-        padding: 8px 15px;
-        font-weight: 600;
-        color: {PP_BLUE_DARK};
-        margin-bottom: 10px;
-    }}
-    
-    /* Result Card Styles (The comparison columns) */
-    .result-card {{
-        border: 1px solid #E0E0E0;
-        border-radius: 12px;
-        padding: 20px;
-        margin-top: 20px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-        min-height: 550px;
-        display: flex;
-        flex-direction: column;
-    }}
-    
-    /* Highlight the Dual Pricing option with the accent purple */
-    .dual-pricing-card {{
-        border: 2px solid {PP_ACCENT_PURPLE};
-    }}
-    
-    .stAlert p {{
-        color: {PP_BLUE_DARK} !important;
-    }}
-    
-    /* Horizontal Rule */
-    hr {{
-        border-top: 2px solid #EEEEEE;
-        margin: 2rem 0;
-    }}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# -----------------------------
-#   LOGO + TITLE (Modern Header Block)
-# -----------------------------
-# Check if logo.png is present (Streamlit requirement)
-if os.path.exists("logo.png"):
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        # Assuming the logo is Pinpoint's logo (use a placeholder icon if not found)
-        st.image("logo.png", width=220)
-else:
-    # Placeholder if logo.png is missing
-    st.markdown(
-        f"<div style='text-align:center; color:{PP_BLUE_DARK}; font-size:2.5rem; font-weight:900;'>PINPOINT PAYMENTS</div>",
-        unsafe_allow_html=True
-    )
-
-
-st.markdown(
-    f"<h2 style='text-align:center; margin-bottom:0.10rem; color:{PP_BLUE_DARK};'>Agent Revenue & Fees Calculator</h2>",
-    unsafe_allow_html=True,
-)
-st.markdown(
-    "<p class='pp-subtitle'>Pinpoint your agent commissions. Compare <strong>Dual Pricing</strong> vs. "
-    "<strong>Flat Rate</strong> with clear monthly, yearly, and one-time economics for your merchants.</p>",
-    unsafe_allow_html=True,
-)
-
-# -----------------------------
-#   MONTHLY VOLUME
-# -----------------------------
-st.markdown("### 📊 Merchant Volume")
-
-volume_input = st.text_input("Enter Monthly Processing Volume ($)", value="15,000")
-
-
-def parse_dollar_input(text: str) -> float:
-    text = text.replace(",", "").replace("$", "").strip()
-    if text == "":
-        return 0.0
-    try:
-        return float(text)
-    except ValueError:
-        return 0.0
-
-
-volume = parse_dollar_input(volume_input)
-
-# Profit assumptions (fixed) - DO NOT CHANGE FUNCTIONALITY
-dual_profit_pct = 0.015       # 1.5% profit for Dual Pricing
-flat_profit_pct = 0.01        # 1.0% profit for Flat Rate
-revshare = 0.50               # 50% to agent
-
-st.write("---")
-
-# -----------------------------
-#   MERCHANT SETUP
-# -----------------------------
-st.markdown("### ⚙️ Merchant Setup")
-
-colA, colB = st.columns(2)
-
-with colA:
-    terminal = st.selectbox(
-        "Terminal type",
-        ["None", "Dejavoo P8", "Dejavoo P12 Mini"],
-    )
-
-    num_terminals = st.number_input(
-        "Number of terminals", min_value=1, value=1, step=1
-    )
-
-with colB:
-    needs_stand = False
-    if terminal == "Dejavoo P8":
-        needs_stand = st.checkbox("Add Dejavoo P8 stand? ($35 one-time)", value=False)
-
-    # Mobile device count (default 0)
-    num_mobile_devices = st.number_input(
-        "Number of mobile devices (optional)",
-        min_value=0,
-        value=0,
-        step=1,
-        help="10 per month per device + 30 one-time download per device.",
-    )
-
-st.write("---")
-
-# -----------------------------
-#   FEE CONSTANTS
-# -----------------------------
+# --- CALCULATION CONSTANTS (Based on the previous app) ---
+DUAL_PROFIT_PCT = 0.015       # 1.5% profit for Dual Pricing
+FLAT_PROFIT_PCT = 0.01        # 1.0% profit for Flat Rate
+REVSHARE = 0.50               # 50% to agent
 ACCOUNT_ON_FILE = 7.50
 GATEWAY = 10.00
 PER_TERMINAL_FIRST = 4.00
 PER_TERMINAL_ADDITIONAL = 2.00
 MOBILE_MONTHLY = 10.00
-
 P8_TERMINAL = 310.00
-P18_TERMINAL = 446.50
 P12_TERMINAL = 166.75
 STAND_P8 = 35.00
 MOBILE_APP_DOWNLOAD = 30.00
-DUAL_COMPLIANCE = 3.00  # one-time DP compliance fee (always applies to Dual Pricing)
+DUAL_COMPLIANCE = 3.00
 
-# -----------------------------
-#   ONE-TIME FEES (PER MERCHANT)
-# -----------------------------
-one_time_terminal = 0.0
-if terminal == "Dejavoo P8":
-    one_time_terminal = P8_TERMINAL
-elif terminal == "Dejavoo P18":
-    one_time_terminal = P18_TERMINAL
-elif terminal == "Dejavoo P12 Mini":
-    one_time_terminal = P12_TERMINAL
+# --- TERMINAL CHOICES FOR PROPOSAL ---
+TERMINAL_OPTIONS = {
+    "Dejavoo P8": P8_TERMINAL,
+    "Dejavoo P12 Mini": P12_TERMINAL,
+    "Pax A920 (Premium)": 450.00
+}
 
-one_time_stand = STAND_P8 if (terminal == "Dejavoo P8" and needs_stand) else 0.0
-one_time_mobile = num_mobile_devices * MOBILE_APP_DOWNLOAD
+# --- JSON SCHEMA for AI Extraction ---
+# We use a structured output to ensure the AI returns data reliably
+SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "monthly_volume": {"type": "NUMBER", "description": "The merchant's total monthly processing volume in US dollars."},
+        "monthly_fees": {"type": "NUMBER", "description": "The total monthly fixed fees currently paid by the merchant."},
+        "current_rate_percentage": {"type": "NUMBER", "description": "The merchant's current blended effective processing rate as a decimal (e.g., 0.025 for 2.5%)."},
+        "current_terminal_count": {"type": "INTEGER", "description": "The number of terminals/devices the merchant currently uses (estimate)."}
+    },
+    "required": ["monthly_volume", "monthly_fees", "current_rate_percentage", "current_terminal_count"]
+}
 
-# Dual includes $3 compliance; Flat does not
-dual_one_time_fees = one_time_terminal + one_time_stand + one_time_mobile + DUAL_COMPLIANCE
-flat_one_time_fees = one_time_terminal + one_time_stand + one_time_mobile
 
-# -----------------------------
-#   MONTHLY FEES (PER MERCHANT)
-# -----------------------------
-monthly_account = ACCOUNT_ON_FILE
-monthly_gateway = GATEWAY
-monthly_first_terminal = PER_TERMINAL_FIRST
-monthly_additional_terminals = max(num_terminals - 1, 0) * PER_TERMINAL_ADDITIONAL
-monthly_mobile = num_mobile_devices * MOBILE_MONTHLY
+# --------------------------------------------------------------------------------
+#                               AI EXTRACTION FUNCTIONS
+# --------------------------------------------------------------------------------
 
-monthly_fees_total = (
-    monthly_account
-    + monthly_gateway
-    + monthly_first_terminal
-    + monthly_additional_terminals
-    + monthly_mobile
+def encode_image(uploaded_file):
+    """Encodes the uploaded file to base64 for API transmission."""
+    return base64.b64encode(uploaded_file.getvalue()).decode("utf-8")
+
+def call_gemini_api(base64_image):
+    """Calls the Gemini API to analyze the image and extract structured data."""
+    system_prompt = (
+        "You are a hyper-accurate financial data extraction specialist for Pinpoint Payments. "
+        "Analyze the provided credit card processing statement image. Extract the four required "
+        "fields (monthly_volume, monthly_fees, current_rate_percentage, current_terminal_count) "
+        "and provide the output ONLY as a JSON object conforming to the provided schema. "
+        "If a specific value is missing, make a reasonable estimate based on typical processing statements."
+    )
+    
+    # Construct the payload for the API call
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {"text": "Analyze this credit card processing statement and return the data as JSON."},
+                    {
+                        "inlineData": {
+                            "mimeType": "image/jpeg",  # Assuming statements are usually JPG/PDF converted to JPG
+                            "data": base64_image
+                        }
+                    }
+                ]
+            }
+        ],
+        "systemInstruction": {"parts": [{"text": system_prompt}]},
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": SCHEMA
+        }
+    }
+
+    # Implement exponential backoff for robustness
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(API_URL, headers={'Content-Type': 'application/json'}, data=json.dumps(payload))
+            response.raise_for_status() # Raises an HTTPError if the status is 4xx or 5xx
+            
+            result = response.json()
+            
+            # Check for candidates and content part text
+            if (result.get('candidates') and 
+                result['candidates'][0].get('content') and 
+                result['candidates'][0]['content'].get('parts') and 
+                result['candidates'][0]['content']['parts'][0].get('text')):
+                
+                # The response text is a JSON string
+                json_string = result['candidates'][0]['content']['parts'][0]['text']
+                return json.loads(json_string)
+
+            else:
+                st.error("AI analysis failed to return valid content structure.")
+                return None
+
+        except requests.exceptions.HTTPError as e:
+            st.error(f"HTTP Error during API call (Attempt {attempt+1}): {e}")
+            if attempt < max_retries - 1 and e.response.status_code in [429, 500, 503]:
+                # Exponential backoff: 2^attempt seconds
+                time.sleep(2 ** attempt)
+            else:
+                return None
+        except Exception as e:
+            st.error(f"An unexpected error occurred: {e}")
+            return None
+    return None
+
+
+# --------------------------------------------------------------------------------
+#                               CALCULATION LOGIC
+# --------------------------------------------------------------------------------
+
+def calculate_proposal_fees(base_data, terminal, num_terminals):
+    """Calculates Pinpoint's proposed costs and profit."""
+    
+    # 1. Calculate Monthly Fees (as per previous app's constants)
+    monthly_first_terminal = PER_TERMINAL_FIRST
+    monthly_additional_terminals = max(num_terminals - 1, 0) * PER_TERMINAL_ADDITIONAL
+    
+    # Simple Terminal Price Lookup
+    one_time_terminal = TERMINAL_OPTIONS.get(terminal, 0.0) 
+
+    monthly_fees_total = (
+        ACCOUNT_ON_FILE
+        + GATEWAY
+        + monthly_first_terminal
+        + monthly_additional_terminals
+    )
+    
+    # 2. Calculate Pricing Profits
+    dual_gross = base_data["monthly_volume"] * DUAL_PROFIT_PCT
+    flat_gross = base_data["monthly_volume"] * FLAT_PROFIT_PCT
+
+    # 3. Compile Results
+    results = {
+        # Current Costs (from AI analysis)
+        "current_monthly_cost": base_data["monthly_volume"] * base_data["current_rate_percentage"] + base_data["monthly_fees"],
+        "current_volume": base_data["monthly_volume"],
+        
+        # Dual Pricing Proposal (Merchant always pays 3.99% flat, covers fees)
+        "dual_proposed_monthly": base_data["monthly_volume"] * 0.0399 + DUAL_COMPLIANCE, # Example rate of 3.99%
+        "dual_agent_profit_monthly": dual_gross * REVSHARE,
+        "dual_one_time": one_time_terminal + DUAL_COMPLIANCE,
+
+        # Flat Rate Proposal (Custom negotiated rate, includes fees)
+        "flat_proposed_monthly": base_data["monthly_volume"] * 0.0295 + (base_data["monthly_volume"] / 1000) * 0.30 + monthly_fees_total, # Example flat rate
+        "flat_agent_profit_monthly": flat_gross * REVSHARE,
+        "flat_one_time": one_time_terminal,
+        
+        # Monthly fees to compare against savings
+        "pinpoint_monthly_fees": monthly_fees_total
+    }
+    return results
+
+
+# --------------------------------------------------------------------------------
+#                               STREAMLIT UI
+# --------------------------------------------------------------------------------
+
+st.set_page_config(
+    page_title="Pinpoint – Statement Analyzer & Proposal Generator",
+    page_icon="🔎",
+    layout="wide",
 )
 
-# All monthly fees are treated as "agent-responsible" in absorbing scenario
-monthly_fees_agent = monthly_fees_total
-
-# -----------------------------
-#   PROFIT CALCULATIONS
-# -----------------------------
-dual_gross = volume * dual_profit_pct
-flat_gross = volume * flat_profit_pct
-
-dual_agent = dual_gross * revshare
-flat_agent = flat_gross * revshare
-
-dual_net_absorb = dual_agent - monthly_fees_agent
-flat_net_absorb = flat_agent - monthly_fees_agent
-
-dual_year_pass = dual_agent * 12
-dual_year_absorb = dual_net_absorb * 12
-
-flat_year_pass = flat_agent * 12
-flat_year_absorb = flat_net_absorb * 12
-
-# -----------------------------
-#   RESULTS (SINGLE MERCHANT)
-# -----------------------------
-st.markdown(f"<h3 style='color:{PP_ACCENT_PURPLE};'>💰 Agent Commission Forecast</h3>", unsafe_allow_html=True)
-
-colLeft, colRight = st.columns(2)
-
-with colLeft:
-    st.markdown(f'<div class="result-card dual-pricing-card">', unsafe_allow_html=True)
-    st.subheader("Dual Pricing (3.99%)")
-    st.write(f"**Gross Profit (Processor, Monthly):** ${dual_gross:,.2f}")
-    st.write(f"**Agent Share (50%, Monthly):** ${dual_agent:,.2f}")
-
-    # Monthly Fees Expander
-    with st.expander(
-        f"Monthly Fees (Total): ${monthly_fees_total:,.2f} — Click for Breakdown"
-    ):
-        st.markdown(f"- Account on file (bank): ${monthly_account:,.2f}")
-        st.markdown(f"- Dejavoo gateway: ${monthly_gateway:,.2f}")
-        st.markdown(f"- Dejavoo first terminal: ${monthly_first_terminal:,.2f}")
-        if monthly_additional_terminals > 0:
-            st.markdown(
-                f"- Dejavoo additional terminals: ${monthly_additional_terminals:,.2f}"
-            )
-        if monthly_mobile > 0:
-            st.markdown(
-                f"- Dejavoo mobile devices: ${monthly_mobile:,.2f}"
-            )
-
-    st.markdown(f"<h4 style='color:{PP_ACCENT_PURPLE}; margin-top:10px;'>Net Commission Summary</h4>", unsafe_allow_html=True)
-    st.markdown(f"**Net to Agent (Passing Monthly Fees):** <span style='font-size:1.25rem; font-weight:700; color:{PP_BLUE_DARK}'>${dual_agent:,.2f} / mo</span>", unsafe_allow_html=True)
-    st.markdown(f"**Net to Agent (Absorbing Fees):** <span style='font-size:1.25rem; font-weight:700; color:{PP_BLUE_DARK}'>${dual_net_absorb:,.2f} / mo</span>", unsafe_allow_html=True)
-    st.markdown(f"**Yearly Net (Passing Monthly Fees):** <span style='font-size:1.25rem; font-weight:700; color:{PP_BLUE_DARK}'>${dual_year_pass:,.2f}</span>", unsafe_allow_html=True)
-    st.markdown(f"**Yearly Net (Absorbing Fees):** <span style='font-size:1.25rem; font-weight:700; color:{PP_BLUE_DARK}'>${dual_year_absorb:,.2f}</span>", unsafe_allow_html=True)
-
-
-    # One-Time Fees Expander
-    with st.expander(
-        f"One-Time Setup Fees: ${dual_one_time_fees:,.2f} — Click for Breakdown"
-    ):
-        if one_time_terminal > 0:
-            st.markdown(
-                f"- Dejavoo terminal hardware: ${one_time_terminal:,.2f}"
-            )
-        if one_time_stand > 0:
-            st.markdown(
-                f"- Dejavoo P8 stand (if selected): ${one_time_stand:,.2f}"
-            )
-        if one_time_mobile > 0:
-            st.markdown(
-                f"- Dejavoo mobile app download ({num_mobile_devices} device(s)): "
-                f"${one_time_mobile:,.2f}"
-            )
-        st.markdown(
-            f"- Dual Pricing compliance fee: ${DUAL_COMPLIANCE:,.2f}"
-        )
-    st.markdown('</div>', unsafe_allow_html=True) # Close result-card
-
-with colRight:
-    st.markdown('<div class="result-card">', unsafe_allow_html=True)
-    st.subheader("Flat Rate (2.95% + $0.30)")
-    st.write(f"**Gross Profit (Processor, Monthly):** ${flat_gross:,.2f}")
-    st.write(f"**Agent Share (50%, Monthly):** ${flat_agent:,.2f}")
-
-    # Monthly Fees Expander
-    with st.expander(
-        f"Monthly Fees (Total): ${monthly_fees_total:,.2f} — Click for Breakdown"
-    ):
-        st.markdown(f"- Account on file (bank): ${monthly_account:,.2f}")
-        st.markdown(f"- Dejavoo gateway: ${monthly_gateway:,.2f}")
-        st.markdown(f"- Dejavoo first terminal: ${monthly_first_terminal:,.2f}")
-        if monthly_additional_terminals > 0:
-            st.markdown(
-                f"- Dejavoo additional terminals: ${monthly_additional_terminals:,.2f}"
-            )
-        if monthly_mobile > 0:
-            st.markdown(
-                f"- Dejavoo mobile devices: ${monthly_mobile:,.2f}"
-            )
-
-    st.markdown(f"<h4 style='color:{PP_BLUE_DARK}; margin-top:10px;'>Net Commission Summary</h4>", unsafe_allow_html=True)
-    st.markdown(f"**Net to Agent (Passing Monthly Fees):** <span style='font-size:1.25rem; font-weight:700; color:{PP_BLUE_DARK}'>${flat_agent:,.2f} / mo</span>", unsafe_allow_html=True)
-    st.markdown(f"**Net to Agent (Absorbing Fees):** <span style='font-size:1.25rem; font-weight:700; color:{PP_BLUE_DARK}'>${flat_net_absorb:,.2f} / mo</span>", unsafe_allow_html=True)
-    st.markdown(f"**Yearly Net (Passing Monthly Fees):** <span style='font-size:1.25rem; font-weight:700; color:{PP_BLUE_DARK}'>${flat_year_pass:,.2f}</span>", unsafe_allow_html=True)
-    st.markdown(f"**Yearly Net (Absorbing Fees):** <span style='font-size:1.25rem; font-weight:700; color:{PP_BLUE_DARK}'>${flat_year_absorb:,.2f}</span>", unsafe_allow_html=True)
-
-
-    # One-Time Fees Expander
-    with st.expander(
-        f"One-Time Setup Fees: ${flat_one_time_fees:,.2f} — Click for Breakdown"
-    ):
-        if one_time_terminal > 0:
-            st.markdown(
-                f"- Dejavoo terminal hardware: ${one_time_terminal:,.2f}"
-            )
-        if one_time_stand > 0:
-            st.markdown(
-                f"- Dejavoo P8 stand (if selected): ${one_time_stand:,.2f}"
-            )
-        if one_time_mobile > 0:
-            st.markdown(
-                f"- Dejavoo mobile app download ({num_mobile_devices} device(s)): "
-                f"${one_time_mobile:,.2f}"
-            )
-        st.markdown(
-            "- Dual Pricing compliance fee: $0.00 (not charged on flat rate)"
-        )
-    st.markdown('</div>', unsafe_allow_html=True) # Close result-card
-
-
-# -----------------------------
-#   DISCLAIMER
-# -----------------------------
-st.write("---")
 st.markdown(
-    "_Disclaimer: These are only estimates. BIN mix and method of processing "
-    "(Card Not Present, Swipe, MOTO) can all change the exact profit for any merchant._"
+    f"""
+    <style>
+    .main {{ background-color: {PP_BG_WHITE}; padding: 2rem; }}
+    h1, h2, h3, h4 {{ color: {PP_BLUE_DARK}; font-weight: 700; letter-spacing: -0.02em; padding-top: 10px; }}
+    .pp-subtitle {{ color: #4A4F5A; font-size: 1.05rem; margin-bottom: 2rem; text-align: center; max-width: 700px; margin-left: auto; margin-right: auto; line-height: 1.5; }}
+    .stFileUploader label p {{ color: {PP_ACCENT_PURPLE}; font-weight: 600; font-size: 1.1rem; }}
+    .stButton>button {{ background-color: {PP_BLUE_DARK}; color: white; border-radius: 20px; padding: 0.5rem 1.5rem; border: none; font-weight: 600; transition: background-color 0.3s; }}
+    .stButton>button:hover {{ background-color: {PP_BLUE_LIGHT}; color: white; }}
+    .data-summary-box {{ border: 2px solid {PP_ACCENT_PURPLE}; border-radius: 12px; padding: 15px; margin-bottom: 20px; background-color: #f7f3f9;}}
+    .proposal-card {{ border: 1px solid #E0E0E0; border-radius: 12px; padding: 20px; margin-top: 20px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05); min-height: 450px;}}
+    .dual-pricing-card {{ border: 2px solid {PP_ACCENT_PURPLE}; }}
+    .metric-value {{ font-size: 1.8rem; font-weight: 800; color: {PP_BLUE_DARK}; }}
+    hr {{ border-top: 2px solid #EEEEEE; margin: 2rem 0; }}
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
+
+# --- Header ---
+st.markdown(
+    f"<h2 style='text-align:center; margin-bottom:0.10rem; color:{PP_BLUE_DARK};'>Statement Analyzer & Proposal Generator</h2>",
+    unsafe_allow_html=True,
+)
+st.markdown(
+    "<p class='pp-subtitle'>Pinpoint exactly what clients are paying. Scan any statement to instantly generate a commission forecast and client savings proposal.</p>",
+    unsafe_allow_html=True,
+)
+st.write("---")
+
+# --- Statement Upload ---
+st.markdown("### 📥 Step 1: Upload Client Statement")
+
+uploaded_file = st.file_uploader(
+    "Upload Image of Statement (JPG or PNG)", 
+    type=["jpg", "jpeg", "png"]
+)
+
+if uploaded_file:
+    st.image(uploaded_file, caption='Statement Preview', width=300)
+    
+    # Store the extracted data in session state to avoid re-running API call
+    if 'extracted_data' not in st.session_state:
+        st.session_state.extracted_data = None
+        
+    if st.button("Analyze Statement with AI"):
+        st.session_state.extracted_data = None # Clear previous
+        
+        with st.spinner("AI is reading the statement..."):
+            base64_image = encode_image(uploaded_file)
+            extracted_data = call_gemini_api(base64_image)
+            
+            if extracted_data:
+                st.session_state.extracted_data = extracted_data
+                st.success("Analysis complete! Review the extracted data below.")
+            else:
+                st.session_state.extracted_data = "ERROR"
+                st.error("AI analysis failed. Please review the image quality or manually enter data.")
+
+# --- Manual Data Entry / AI Output ---
+st.write("---")
+st.markdown("### 📝 Step 2: Review & Finalize Data")
+
+base_data_form = st.container()
+
+# Initialize data structure
+if st.session_state.get('extracted_data') == "ERROR":
+    initial_volume = 0.0
+    initial_fees = 0.0
+    initial_rate = 0.0
+    initial_count = 1
+    st.warning("Please enter the values below manually.")
+elif st.session_state.get('extracted_data'):
+    data = st.session_state.extracted_data
+    initial_volume = data.get('monthly_volume', 0.0)
+    initial_fees = data.get('monthly_fees', 0.0)
+    initial_rate = data.get('current_rate_percentage', 0.0)
+    initial_count = data.get('current_terminal_count', 1)
+    
+    # Display AI Extracted Summary
+    st.markdown(f'<div class="data-summary-box">', unsafe_allow_html=True)
+    st.markdown(f"**AI Extracted Volume:** <span class='metric-value'>${initial_volume:,.0f}</span>", unsafe_allow_html=True)
+    st.markdown(f"**AI Extracted Fees:** <span class='metric-value'>${initial_fees:,.2f}</span>", unsafe_allow_html=True)
+    st.markdown(f"**AI Extracted Rate:** <span class='metric-value'>{(initial_rate * 100):.2f}%</span>", unsafe_allow_html=True)
+    st.markdown(f'</div>', unsafe_allow_html=True)
+
+else:
+    initial_volume = 15000.0
+    initial_fees = 75.00
+    initial_rate = 0.028  # 2.8%
+    initial_count = 1
+
+# Manual Data Input Fields (Pre-populated by AI if successful)
+with base_data_form:
+    st.markdown("#### Input Merchant Financials")
+    colV, colR, colF = st.columns(3)
+    
+    volume_input = colV.number_input(
+        "Monthly Processing Volume ($)", 
+        min_value=0.0, 
+        value=initial_volume, 
+        step=100.0
+    )
+    fees_input = colR.number_input(
+        "Current Total Fixed Monthly Fees ($)", 
+        min_value=0.0, 
+        value=initial_fees, 
+        step=5.0
+    )
+    rate_input = colF.number_input(
+        "Current Blended Effective Rate (e.g., 0.025 for 2.5%)", 
+        min_value=0.0, 
+        max_value=1.0, 
+        value=initial_rate, 
+        format="%.4f"
+    )
+    
+    st.markdown("#### Input Terminal Selection")
+    colT, colN, colTerminal = st.columns(3)
+    
+    terminal_type = colT.selectbox(
+        "Proposed Terminal Model",
+        options=list(TERMINAL_OPTIONS.keys()),
+        index=list(TERMINAL_OPTIONS.keys()).index("Dejavoo P8") if "Dejavoo P8" in TERMINAL_OPTIONS else 0
+    )
+    num_terminals = colN.number_input(
+        "Number of Terminals Required", 
+        min_value=1, 
+        value=initial_count, 
+        step=1
+    )
+    
+    # Re-run calculation button
+    if st.button("Generate Proposal"):
+        # Save validated data to session state for calculation
+        st.session_state.base_data = {
+            "monthly_volume": volume_input,
+            "monthly_fees": fees_input,
+            "current_rate_percentage": rate_input,
+            "current_terminal_count": num_terminals # Use selected count for consistency
+        }
+        st.session_state.terminal_choice = terminal_type
+        st.session_state.num_terminals = num_terminals
+        st.session_state.proposal_generated = True
+
+# --- Proposal Results ---
+
+if st.session_state.get('proposal_generated', False) and st.session_state.get('base_data'):
+    st.write("---")
+    st.markdown(f"### 🎯 Step 3: Pinpoint Payments Client Proposal")
+    
+    base_data = st.session_state.base_data
+    terminal = st.session_state.terminal_choice
+    num_terminals = st.session_state.num_terminals
+    
+    proposal = calculate_proposal_fees(base_data, terminal, num_terminals)
+
+    # Calculate Savings
+    current_annual_cost = proposal["current_monthly_cost"] * 12
+    dual_annual_cost = proposal["dual_proposed_monthly"] * 12
+    flat_annual_cost = proposal["flat_proposed_monthly"] * 12
+    
+    dual_savings = current_annual_cost - dual_annual_cost
+    flat_savings = current_annual_cost - flat_annual_cost
+
+    # Display Current Metrics
+    st.markdown(f"#### Client Status (Total Annual Cost: ${current_annual_cost:,.2f})")
+    colCurr1, colCurr2, colCurr3 = st.columns(3)
+    colCurr1.metric("Current Monthly Volume", f"${base_data['monthly_volume']:,.0f}")
+    colCurr2.metric("Current Effective Rate", f"{(base_data['current_rate_percentage'] * 100):.2f}%")
+    colCurr3.metric("Current Monthly Cost", f"${proposal['current_monthly_cost']:,.2f}")
+    
+    st.write("---")
+    
+    # Display Proposal Comparison
+    colDual, colFlat = st.columns(2)
+    
+    # Dual Pricing Card
+    with colDual:
+        st.markdown(f'<div class="proposal-card dual-pricing-card">', unsafe_allow_html=True)
+        st.markdown(f"#### Dual Pricing Proposal (3.99%)")
+        st.markdown(f"**Annual Savings:** <span style='color: green; font-size: 1.8rem; font-weight: 800;'>${dual_savings:,.2f}</span>", unsafe_allow_html=True)
+        st.markdown(f"**Agent Monthly Commission:** <span style='font-size: 1.2rem; color: {PP_BLUE_DARK}; font-weight: 700;'>${proposal['dual_agent_profit_monthly']:,.2f}</span>", unsafe_allow_html=True)
+        
+        st.markdown("##### Fees & Equipment")
+        st.markdown(f"- Proposed Terminal: **{terminal}**")
+        st.markdown(f"- Proposed Terminals Cost (One-Time): **${proposal['dual_one_time']:,.2f}**")
+        st.markdown(f"- Total Monthly Cost to Client: **${proposal['dual_proposed_monthly']:,.2f}**")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+    # Flat Rate Card
+    with colFlat:
+        st.markdown(f'<div class="proposal-card">', unsafe_allow_html=True)
+        st.markdown(f"#### Flat Rate Proposal (2.95% + $0.30)")
+        st.markdown(f"**Annual Savings:** <span style='color: green; font-size: 1.8rem; font-weight: 800;'>${flat_savings:,.2f}</span>", unsafe_allow_html=True)
+        st.markdown(f"**Agent Monthly Commission:** <span style='font-size: 1.2rem; color: {PP_BLUE_DARK}; font-weight: 700;'>${proposal['flat_agent_profit_monthly']:,.2f}</span>", unsafe_allow_html=True)
+        
+        st.markdown("##### Fees & Equipment")
+        st.markdown(f"- Proposed Terminal: **{terminal}**")
+        st.markdown(f"- Proposed Terminals Cost (One-Time): **${proposal['flat_one_time']:,.2f}**")
+        st.markdown(f"- Total Monthly Cost to Client: **${proposal['flat_proposed_monthly']:,.2f}**")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+    st.write("---")
+    st.markdown(f"#### 📱 Terminal Recommendation")
+    st.info(f"The proposal includes the **{terminal}** terminal, costing **${TERMINAL_OPTIONS.get(terminal, 0.0):,.2f}** one-time, which is a great modern solution for a merchant with ${base_data['monthly_volume']:,.0f} in volume.")
